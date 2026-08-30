@@ -1,11 +1,11 @@
 # healthMaps
 Code and data resources for a constraint-based framework to diagnose mobility-solvable gaps in healthcare accessibility.
 
-# A constraint-based framework reveals mobility-solvable gaps in healthcare accessibility
+# Mobility reveals a largely solvable geography of healthcare access gaps
 
 This repository contains the code, analytical workflow, and supporting resources associated with the study:
 
-**“A constraint-based framework reveals mobility-solvable gaps in healthcare accessibility”**
+**“Mobility reveals a largely solvable geography of healthcare access gaps”**
 
 The study develops a constraint-based framework for diagnosing why geographic healthcare accessibility gaps persist. Rather than treating poor accessibility as a uniform deficit, the framework distinguishes between accessibility gaps that may be alleviated through improved mobility and those that remain constrained by insufficient healthcare supply.
 
@@ -132,7 +132,7 @@ If you use the code, workflow, or derived resources from this repository, please
 Citation information will be updated upon publication.
 
 ```text
-Jiang, X. et al. A constraint-based framework reveals mobility-solvable gaps in healthcare accessibility.
+Jiang, X. et al. Mobility reveals a largely solvable geography of healthcare access gaps.
 ```
 
 ## Code and data availability
