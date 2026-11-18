@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Real-time Healthcare Access</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.js"></script>
+  <style>
+    body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+    #map { width: 100%; height: 100vh; }
+    #style-buttons {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1;
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 5px;
+      color: white;
+    }
+    #style-buttons button {
+      background-color: #333;
+      color: white;
+      border: 1px solid #444;
+      padding: 5px 10px;
+      margin-right: 5px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #style-buttons button:hover {
+      background-color: #555;
+    }
+    /* Legend styling */
+    .legend {
+      position: absolute;
+      bottom: 30px;
+      left: 10px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 5px;
+      font-size: 12px;
+      color: #000;
+      z-index: 1;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    }
+    .legend-title {
+      font-weight: bold;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+    .legend-section {
+      margin-bottom: 10px;
+    }
+    .legend-scale {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .legend-scale div {
+      width: 30px;
+      height: 10px;
+      margin-right: 5px;
+    }
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+    }
+    .legend-symbol {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .legend-symbol div {
+      width: 10px;
+      height: 10px;
+      background: #00FFFF; /* Healthcare color */
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="style-buttons">
+    <button id="dark-style">Dark</button>
+    <button id="light-style">Light</button>
+    <button id="streets-style">Streets</button>
+    <button id="satellite-style">Satellite</button>
+    <button id="outdoors-style">Outdoors</button>
+  </div>
+
+  <!-- Comprehensive Legend -->
+  <div class="legend" id="color-legend">
+    <!-- <div class="legend-title">Map Legend</div> -->
+    
+    <!-- Travel Distance Legend -->
+    <div class="legend-section">
+      <div><strong>Travel Time</strong></div>
+      <div class="legend-scale">
+        <div style="background: #FFFF00;"></div> <!-- Yellow for Short -->
+        <div style="background: #FFA500;"></div> <!-- Orange for Medium -->
+        <div style="background: #FF0000;"></div> <!-- Red for Long -->
+      </div>
+      <div class="legend-labels">
+        <span>Short</span>
+        <span>Medium</span>
+        <span>Long</span>
+      </div>
+    </div>
+    
+    <!-- Healthcare Points Legend -->
+    <div class="legend-section">
+      <!-- <div><strong>Healthcare Facilities</strong></div> -->
+      <div class="legend-symbol">
+        <div></div>
+        <span>Facility POIs</span>
+      </div>
+    </div>
+    <div class="legend-section">
+      <div class="legend-symbol">
+        <div style="background: #16A34A;"></div>
+        <span>Start Point</span>
+      </div>
+      <div class="legend-symbol">
+        <div style="background: #DC2626;"></div>
+        <span>End Point</span>
+      </div>
+    </div>
+    <div class="legend-section">
+        <div></div>
+        <span>Clicking on<br>residence<br>navigates to<br>facilities</span>
+    </div>
+  </div>
+
+
+
+
+  <div id="map"></div>
+
+  <script>
+    // Set your Mapbox access token
+    mapboxgl.accessToken = 'pk.eyJ1IjoiZmVuZzEyMzQ1NiIsImEiOiJjbGdlaWZ4c2wwajhnM2txM2Jxejd2a3JzIn0.5r3JvgXMhO_7DNshA9mQRQ'; // Replace with your Mapbox access token
+
+    // Initialize the Mapbox map
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/satellite-streets-v11', // Default satellite streets basemap
+      center: [113.99639, 22.6001], // Map center [lng, lat]
+      zoom: 15
+    });
+
+    // AMap (Gaode Map) API Key (replace with your actual AMap API key)
+    const amapKey = '0d1daa20ab3f09e97b2d705ac17a98f9'; // Replace with your AMap API key
+
+    // Default endpoint examples in Shenzhen (WGS84 coordinates)
+    const defaultOriginWGS84 = [113.9946955, 22.6035013];
+    const defaultDestinationWGS84 = [113.9961680, 22.5945505];
+    const defaultWalkRouteId = 'default-route_walk';
+    const defaultWalkInitialSegmentId = 'default-initialSegment_walk';
+    const defaultWalkFinalSegmentId = 'default-finalSegment_walk';
+    const defaultDriveRouteId = 'default-route_drive';
+    const defaultDriveInitialSegmentId = 'default-initialSegment_drive';
+    const defaultDriveFinalSegmentId = 'default-finalSegment_drive';
+    let originMarker = null;
+    let destinationMarker = null;
+
+    /**
+     * Stores all drawn navigation routes
+     * Format:
+     * {
+     *   routeId: {
+     *     routeId: 'route',
+     *     initialSegmentId: 'initialSegment',
+     *     finalSegmentId: 'finalSegment',
+     *     coordinates: [...] // WGS84 coordinates
+     *   },
+     *   tileset2-route: { ... },
+     *   ...
+     * }
+     */
+    const drawnRoutes = {};
+    const drawnRoutes2 = {};
+    /**
+     * Defines all custom layer configurations, including navigation information
+     * Stored as an array of configuration objects
+     */
+    const layerConfigs = [
+      {
+        sourceId: 'myVectorTileSource1',
+        tilesetUrl: 'mapbox://feng123456.0534di6r',
+        layerId: 'myVectorLayer',
+        sourceLayer: 'new_beijing_points',
+        navigation: {
+          routeId: 'route',
+          initialSegmentId: 'initialSegment',
+          finalSegmentId: 'finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource2',
+        tilesetUrl: 'mapbox://feng123456.2u9z9kbc',
+        layerId: 'myVectorLayer2',
+        sourceLayer: 'Shanghai_points',
+        navigation: {
+          routeId: 'tileset2-route',
+          initialSegmentId: 'tileset2-initialSegment',
+          finalSegmentId: 'tileset2-finalSegment'
+        }
+      },
+      // Add other layer configurations...
+      {
+        sourceId: 'myVectorTileSource3',
+        tilesetUrl: 'mapbox://feng123456.4sddlxh5',
+        layerId: 'myVectorLayer3',
+        sourceLayer: 'Guangzhou_points',
+        navigation: {
+          routeId: 'tileset3-route',
+          initialSegmentId: 'tileset3-initialSegment',
+          finalSegmentId: 'tileset3-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource4',
+        tilesetUrl: 'mapbox://feng123456.5j18ng7n',
+        layerId: 'myVectorLayer4',
+        sourceLayer: 'Shenzhen_points',
+        navigation: {
+          routeId: 'tileset4-route',
+          initialSegmentId: 'tileset4-initialSegment',
+          finalSegmentId: 'tileset4-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource5',
+        tilesetUrl: 'mapbox://feng123456.6smchu1i',
+        layerId: 'myVectorLayer5',
+        sourceLayer: 'Jiujiang_points',
+        navigation: {
+          routeId: 'tileset5-route',
+          initialSegmentId: 'tileset5-initialSegment',
+          finalSegmentId: 'tileset5-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource6',
+        tilesetUrl: 'mapbox://feng123456.7bgegbiy',
+        layerId: 'myVectorLayer6',
+        sourceLayer: 'Wuhan_points',
+        navigation: {
+          routeId: 'tileset6-route',
+          initialSegmentId: 'tileset6-initialSegment',
+          finalSegmentId: 'tileset6-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource7',
+        tilesetUrl: 'mapbox://feng123456.0x574h76',
+        layerId: 'myVectorLayer7',
+        sourceLayer: 'part_1',
+        navigation: {
+          routeId: 'tileset7-route',
+          initialSegmentId: 'tileset7-initialSegment',
+          finalSegmentId: 'tileset7-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource8',
+        tilesetUrl: 'mapbox://feng123456.2zdfl9to',
+        layerId: 'myVectorLayer8',
+        sourceLayer: 'part_2',
+        navigation: {
+          routeId: 'tileset8-route',
+          initialSegmentId: 'tileset8-initialSegment',
+          finalSegmentId: 'tileset8-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource9',
+        tilesetUrl: 'mapbox://feng123456.cdz98x5y',
+        layerId: 'myVectorLayer9',
+        sourceLayer: 'part_3',
+        navigation: {
+          routeId: 'tileset9-route',
+          initialSegmentId: 'tileset9-initialSegment',
+          finalSegmentId: 'tileset9-finalSegment'
+        }
+      },
+      {
+        sourceId: 'myVectorTileSource10',
+        tilesetUrl: 'mapbox://feng123456.afak56yf',
+        layerId: 'myVectorLayer10',
+        sourceLayer: 'part_4',
+        navigation: {
+          routeId: 'tileset10-route',
+          initialSegmentId: 'tileset10-initialSegment',
+          finalSegmentId: 'tileset10-finalSegment'
+        }
+      },
+      // Healthcare source and layer configuration
+      {
+        sourceId: 'healthcare',
+        tilesetUrl: 'mapbox://feng123456.2jxjjzfq', // Healthcare points source
+        layerId: 'healthcare',
+        sourceLayer: 'healthcare_pois',
+        navigation: null // Assume healthcare layer does not require navigation
+      }
+    ];
+
+    /**
+     * General function to add circle layers based on layer configuration
+     * @param {object} config - Layer configuration object
+     */
+    function addCircleLayer(config) {
+      let paint = {};
+
+      // Define paint properties based on different layers
+      if (config.layerId === 'healthcare') {
+        paint = {
+          'circle-radius': 10,
+          'circle-color': '#00FFFF', // Distinct color for healthcare
+          'circle-opacity': 0.9
+        };
+      } else {
+        paint = {
+          'circle-radius': [
+            'interpolate', ['linear'], ['get', 'Distance'],
+            100, 1, // Increased size for residences
+            5000, 5
+          ],
+          'circle-color': [
+            'interpolate', ['linear'], ['get', 'Distance'],
+            100, '#FFFF00', // Yellow for short distances
+            1000, '#FFA500', // Orange for medium distances
+            5000, '#FF0000'  // Red for long distances
+          ],
+          'circle-opacity': 0.8
+        };
+      }
+
+      map.addLayer({
+        id: config.layerId,
+        type: 'circle',
+        source: config.sourceId,
+        'source-layer': config.sourceLayer,
+        paint: paint
+      }, 'waterway-label'); // Adjust layer order as needed
+    }
+
+    function showFinishPopup(map, lngLat, text = 'Path planning completed') {
+      new mapboxgl.Popup({
+        closeOnClick: true,
+        closeButton: true,
+        offset: 25
+      })
+        .setLngLat(lngLat) // 终点 WGS84
+        .setHTML(`
+          <div style="font-size:14px;">
+            <div style="font-weight:600;margin-bottom:4px;">✅ Navigation ready</div>
+            <div>${text}</div>
+          </div>
+        `)
+        .addTo(map);
+    }
+
+    /**
+     * Adds all custom layers to the map
+     */
+
+    function formatDistance(meters) {
+        return meters >= 1000
+          ? (meters / 1000).toFixed(1) + ' km'
+          : meters + ' m';
+      }
+
+    function formatDuration(seconds) {
+        const min = Math.round(seconds / 60);
+        return min + ' min';
+      }
+
+    function createEndpointElement(letter, label, color, coordinates) {
+      const element = document.createElement('div');
+      element.title = `${label} (WGS84: ${coordinates[0].toFixed(6)}, ${coordinates[1].toFixed(6)})`;
+      element.style.display = 'flex';
+      element.style.alignItems = 'center';
+      element.style.gap = '5px';
+      element.style.zIndex = '10';
+      element.innerHTML = `
+        <span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:${color};border:2px solid #fff;color:#fff;font-weight:700;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.55);">${letter}</span>
+        <span style="padding:3px 6px;border-radius:4px;background:rgba(255,255,255,.92);color:#111;font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35);">${label}</span>
+      `;
+      return element;
+    }
+
+    function setEndpointMarkers(originWGS84, destinationWGS84, isDefault = false) {
+      if (originMarker) originMarker.remove();
+      if (destinationMarker) destinationMarker.remove();
+
+      const originLabel = isDefault ? 'Start' : 'Start';
+      const destinationLabel = isDefault ? 'End' : 'End';
+
+      originMarker = new mapboxgl.Marker({
+        element: createEndpointElement('A', originLabel, '#16A34A', originWGS84),
+        anchor: 'bottom'
+      })
+        .setLngLat(originWGS84)
+        .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(
+          `<strong>${originLabel}</strong><br>WGS84: ${originWGS84[0].toFixed(6)}, ${originWGS84[1].toFixed(6)}`
+        ))
+        .addTo(map);
+
+      destinationMarker = new mapboxgl.Marker({
+        element: createEndpointElement('B', destinationLabel, '#DC2626', destinationWGS84),
+        anchor: 'bottom'
+      })
+        .setLngLat(destinationWGS84)
+        .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(
+          `<strong>${destinationLabel}</strong><br>WGS84: ${destinationWGS84[0].toFixed(6)}, ${destinationWGS84[1].toFixed(6)}`
+        ))
+        .addTo(map);
+    }
+
+    function removeRouteLayer(routeId) {
+      const layerId = `${routeId}-layer`;
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      if (map.getSource(routeId)) map.removeSource(routeId);
+    }
+
+    function removeDefaultRoutes() {
+      [
+        defaultWalkRouteId,
+        defaultWalkInitialSegmentId,
+        defaultWalkFinalSegmentId,
+        defaultDriveRouteId,
+        defaultDriveInitialSegmentId,
+        defaultDriveFinalSegmentId
+      ].forEach(removeRouteLayer);
+      delete drawnRoutes[defaultWalkRouteId];
+      delete drawnRoutes2[defaultDriveRouteId];
+    }
+
+    function addCustomLayers() {
+      console.log("Adding custom layers...");
+      layerConfigs.forEach((config) => {
+        // Add data source if it does not exist
+        if (!map.getSource(config.sourceId)) {
+          console.log(`Adding source: ${config.sourceId}`);
+          map.addSource(config.sourceId, {
+            type: 'vector',
+            url: config.tilesetUrl
+          });
+        } else {
+          console.log(`Source already exists: ${config.sourceId}`);
+        }
+
+        // Add layer if it does not exist
+        if (!map.getLayer(config.layerId)) {
+          console.log(`Adding layer: ${config.layerId}`);
+          addCircleLayer(config);
+
+          // If the layer has navigation configuration, add event listeners
+          if (config.navigation) {
+            // Click event
+            map.on('click', config.layerId, async (e) => {
+              if (!e.features || !e.features.length) return;
+              const feature = e.features[0];
+
+              // Extract WGS84 coordinates
+              const originWGS84 = [parseFloat(feature.properties.X1), parseFloat(feature.properties.Y1)];
+              const destinationWGS84 = [parseFloat(feature.properties.X2), parseFloat(feature.properties.Y2)];
+
+              // Replace the illustrative default route with the user's selection.
+              removeDefaultRoutes();
+
+              // Update the visible endpoint markers to the user's selected pair.
+              setEndpointMarkers(originWGS84, destinationWGS84);
+
+              // Convert to GCJ-02 coordinates
+              const originGCJ02 = wgs84togcj02(originWGS84[0], originWGS84[1]);
+              const destinationGCJ02 = wgs84togcj02(destinationWGS84[0], destinationWGS84[1]);
+
+              // Format as "lng,lat"
+              const origin = `${originGCJ02[0]},${originGCJ02[1]}`;
+              const destination = `${destinationGCJ02[0]},${destinationGCJ02[1]}`;
+
+              console.log(`Clicked on ${config.layerId}: Origin=${origin}, Destination=${destination}`);
+              const walkResult = await handleNavigation_walk(
+                map,
+                origin, 
+                destination, 
+                originWGS84, 
+                destinationWGS84, 
+                config.navigation.routeId + '_walk',
+                config.navigation.initialSegmentId + '_walk',
+                config.navigation.finalSegmentId + '_walk'
+              );
+
+              const driveResult = await handleNavigation_drive(
+                map,
+                origin,
+                destination,
+                originWGS84,
+                destinationWGS84,
+                config.navigation.routeId + '_drive',
+                config.navigation.initialSegmentId + '_drive',
+                config.navigation.finalSegmentId + '_drive'
+              );
+
+            showFinishPopup(
+              map,
+              destinationWGS84,
+              `
+                Zoom in for details<br/>
+                Drive (red): ${formatDistance(driveResult.distance)}, ${formatDuration(driveResult.duration)}<br/>
+                Walk (White): ${formatDistance(walkResult.distance)}, ${formatDuration(walkResult.duration)}<br/>
+              `
+            );
+            // showFinishPopup(map, destinationWGS84, 'Drive (red) & Walk (white)');
+            });
+            // Mouse hover effect
+            map.on('mouseenter', config.layerId, () => {
+              map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', config.layerId, () => {
+              map.getCanvas().style.cursor = '';
+            });
+
+          }
+        } else {
+          console.log(`Layer already exists: ${config.layerId}`);
+        }
+      });
+      console.log("All custom layers added.");
+    }
+
+    /**
+     * Initializes custom layers after the map loads
+     */
+    map.on('load', () => {
+      console.log("Map loaded. Adding custom layers...");
+      setEndpointMarkers(defaultOriginWGS84, defaultDestinationWGS84, true);
+      addCustomLayers(); // Initial loading of all custom layers
+      drawDefaultRoutes();
+    });
+
+    /**
+     * Changes the map style without losing custom layers and navigation routes
+     * @param {string} style - Mapbox style URL
+     */
+    function changeStyle(style) {
+      console.log(`Changing style to: ${style}`);
+      map.setStyle(style);
+
+      // After the style loads, re-add custom layers and navigation routes
+      map.once('style.load', () => {
+        console.log("New style loaded. Re-adding custom layers...");
+        addCustomLayers();
+
+      Object.values(drawnRoutes).forEach((route) => {
+        addOrUpdateLayer(map, route.routeId + '_walk', route.coordinates, '#FFFFFF', true);
+        addOrUpdateLayer(map, route.initialSegmentId + '_walk', route.initialSegment, '#FFFFFF', true);
+        addOrUpdateLayer(map, route.finalSegmentId + '_walk', route.finalSegment, '#FFFFFF', true);
+      });
+// 27ae60
+// 2980b9
+      Object.values(drawnRoutes2).forEach((route) => {
+        addOrUpdateLayer(map, route.routeId + '_drive', route.coordinates, '#FF0000', true);
+        addOrUpdateLayer(map, route.initialSegmentId + '_drive', route.initialSegment, '#FF0000', true);
+        addOrUpdateLayer(map, route.finalSegmentId + '_drive', route.finalSegment, '#FF0000', true);
+      });
+        
+      });
+    }
+
+    /**
+     * Binds click events to style buttons to change the map style
+     */
+    const styleButtons = {
+      'dark-style': 'mapbox://styles/mapbox/dark-v11',
+      'light-style': 'mapbox://styles/mapbox/light-v11',
+      'streets-style': 'mapbox://styles/mapbox/streets-v11',
+      'satellite-style': 'mapbox://styles/mapbox/satellite-streets-v11',
+      'outdoors-style': 'mapbox://styles/mapbox/outdoors-v11'
+    };
+
+    Object.keys(styleButtons).forEach(buttonId => {
+      const styleUrl = styleButtons[buttonId];
+      document.getElementById(buttonId).addEventListener('click', () => changeStyle(styleUrl));
+    });
+
+    /**
+     * Handles the navigation path and dashed segments
+     * @param {object} map - Mapbox map instance
+     * @param {string} origin - Origin coordinates in "lng,lat" format (GCJ-02)
+     * @param {string} destination - Destination coordinates in "lng,lat" format (GCJ-02)
+     * @param {array} originWGS84 - Origin coordinates as [lng, lat] (WGS84)
+     * @param {array} destinationWGS84 - Destination coordinates as [lng, lat] (WGS84)
+     * @param {string} routeId - Route layer ID
+     * @param {string} initialSegmentId - Initial segment layer ID
+     * @param {string} finalSegmentId - Final segment layer ID
+     */
+    async function handleNavigation_walk(map, origin, destination, originWGS84, destinationWGS84, routeId, initialSegmentId, finalSegmentId) {
+      console.log(`Handling navigation from ${origin} to ${destination}`);
+      const amapUrl = `https://restapi.amap.com/v3/direction/walking?origin=${origin}&destination=${destination}&key=${amapKey}`;
+      try {
+        const response = await fetch(amapUrl);
+        const data = await response.json();
+
+        if (data.status === '1') {
+          const steps = data.route.paths[0].steps;
+          let path = '';
+          steps.forEach(step => {
+            path += step.polyline + ';';
+          });
+          path = path.slice(0, -1); // Remove the last semicolon
+          const coordinatesGCJ02 = path.split(';').map(coord => coord.split(',').map(Number));
+
+          // Convert GCJ-02 coordinates to WGS84 coordinates
+          const coordinates = coordinatesGCJ02.map(c => gcj02towgs84(c[0], c[1]));
+
+          // Initial dashed segment: from originWGS84 to the first point of the path (WGS84)
+          const initialSegment = [originWGS84, coordinates[0]];
+          addOrUpdateLayer(map, initialSegmentId, initialSegment, '#FFFFFF', true);
+
+          // Final dashed segment: from the last point of the path (WGS84) to destinationWGS84 (WGS84)
+          const finalSegment = [coordinates[coordinates.length - 1], destinationWGS84];
+          addOrUpdateLayer(map, finalSegmentId, finalSegment, '#FFFFFF', true);
+
+          // Draw the complete path (WGS84)
+          addOrUpdateLayer(map, routeId, coordinates, '#FFFFFF', true);
+
+          // Store the drawn route for persistence after style changes
+          drawnRoutes[routeId] = {
+            routeId: routeId,
+            initialSegmentId: initialSegmentId,
+            finalSegmentId: finalSegmentId,
+            coordinates: coordinates,
+            initialSegment: initialSegment,
+            finalSegment: finalSegment
+          };
+
+          const pathInfo = data.route.paths[0];
+          const duration = Number(pathInfo.duration); // 秒
+          const distance = Number(pathInfo.distance); // 米（顺便拿）
+
+          return {
+              mode: 'walk',
+              duration,
+              distance
+            };
+        }
+        // else {
+        //   alert('Unable to retrieve navigation route. Please check the origin and destination!');
+        // }
+      } 
+      catch (error) {
+        console.error('Error fetching navigation data:', error);
+        alert('An error occurred while fetching the navigation route.');
+      }
+    }
+
+
+
+
+
+    async function handleNavigation_drive(map, origin, destination, originWGS84, destinationWGS84, routeId, initialSegmentId, finalSegmentId) {
+      console.log(`Handling navigation from ${origin} to ${destination}`);
+      const amapUrl = `https://restapi.amap.com/v3/direction/driving?origin=${origin}&destination=${destination}&key=${amapKey}`;
+      try {
+        const response = await fetch(amapUrl);
+        const data = await response.json();
+
+        if (data.status === '1') {
+          const steps = data.route.paths[0].steps;
+          let path = '';
+          steps.forEach(step => {
+            path += step.polyline + ';';
+          });
+          path = path.slice(0, -1); // Remove the last semicolon
+          const coordinatesGCJ02 = path.split(';').map(coord => coord.split(',').map(Number));
+
+          // Convert GCJ-02 coordinates to WGS84 coordinates
+          const coordinates = coordinatesGCJ02.map(c => gcj02towgs84(c[0], c[1]));
+
+          // Initial dashed segment: from originWGS84 to the first point of the path (WGS84)
+          const initialSegment = [originWGS84, coordinates[0]];
+          addOrUpdateLayer(map, initialSegmentId, initialSegment, '#FF0000', true);
+
+          // Final dashed segment: from the last point of the path (WGS84) to destinationWGS84 (WGS84)
+          const finalSegment = [coordinates[coordinates.length - 1], destinationWGS84];
+          addOrUpdateLayer(map, finalSegmentId, finalSegment, '#FF0000', true);
+
+          // Draw the complete path (WGS84)
+          addOrUpdateLayer(map, routeId, coordinates, '#FF0000', true);
+
+          // Store the drawn route for persistence after style changes
+          drawnRoutes2[routeId] = {
+            routeId: routeId,
+            initialSegmentId: initialSegmentId,
+            finalSegmentId: finalSegmentId,
+            coordinates: coordinates,
+            initialSegment: initialSegment,
+            finalSegment: finalSegment
+          };
+
+
+
+          const pathInfo = data.route.paths[0];
+          const duration = Number(pathInfo.duration); // 秒
+          const distance = Number(pathInfo.distance); // 米（顺便拿）
+
+          return {
+              mode: 'drive',
+              duration,
+              distance
+            };
+        }
+        // else {
+        //   alert('Unable to retrieve navigation route. Please check the origin and destination!');
+        // }
+      } 
+      catch (error) {
+        console.error('Error fetching navigation data:', error);
+        alert('An error occurred while fetching the navigation route.');
+      }
+    }
+
+    async function drawDefaultRoutes() {
+      const originGCJ02 = wgs84togcj02(defaultOriginWGS84[0], defaultOriginWGS84[1]);
+      const destinationGCJ02 = wgs84togcj02(defaultDestinationWGS84[0], defaultDestinationWGS84[1]);
+      const origin = `${originGCJ02[0]},${originGCJ02[1]}`;
+      const destination = `${destinationGCJ02[0]},${destinationGCJ02[1]}`;
+
+      const walkResult = await handleNavigation_walk(
+        map,
+        origin,
+        destination,
+        defaultOriginWGS84,
+        defaultDestinationWGS84,
+        defaultWalkRouteId,
+        defaultWalkInitialSegmentId,
+        defaultWalkFinalSegmentId
+      );
+
+      const driveResult = await handleNavigation_drive(
+        map,
+        origin,
+        destination,
+        defaultOriginWGS84,
+        defaultDestinationWGS84,
+        defaultDriveRouteId,
+        defaultDriveInitialSegmentId,
+        defaultDriveFinalSegmentId
+      );
+
+      if (walkResult && driveResult) {
+        console.log('Default walking and driving routes are ready.');
+        showFinishPopup(
+          map,
+          defaultDestinationWGS84,
+          `
+            Zoom in for details<br/>
+            Drive (red): ${formatDistance(driveResult.distance)}, ${formatDuration(driveResult.duration)}<br/>
+            Walk (White): ${formatDistance(walkResult.distance)}, ${formatDuration(walkResult.duration)}<br/>
+          `
+        );
+      }
+    }
+
+
+    
+
+    /**
+     * Adds or updates a layer on the map
+     * @param {object} map - Mapbox map instance
+     * @param {string} id - Layer ID
+     * @param {array} coordinates - Array of coordinates [lng, lat] (WGS84)
+     * @param {string} color - Line color
+     * @param {boolean} isDashed - Whether the line is dashed
+     */
+    function addOrUpdateLayer(map, id, coordinates, color, isDashed) {
+      const layerLayerId = `${id}-layer`;
+      if (!map.getSource(id)) {
+        console.log(`Adding source and layer: ${layerLayerId}`);
+        map.addSource(id, {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: coordinates
+            }
+          }
+        });
+
+        map.addLayer({
+          id: layerLayerId,
+          type: 'line',
+          source: id,
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round'
+          },
+          paint: {
+            'line-color': color,
+            'line-width': isDashed ? 2 : 2,
+            'line-opacity': 0.9,
+            ...(isDashed ? { 'line-dasharray': [1, 1] } : {})
+          }
+        }, 'waterway-label'); // Adjust layer order as needed
+      } else {
+        console.log(`Updating source data: ${id}`);
+        map.getSource(id).setData({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: coordinates
+          }
+        });
+      }
+    }
+
+    /**
+     * Converts WGS84 coordinates to GCJ-02
+     * Reference: https://github.com/wandergis/coordtransform
+     * @param {number} lng - Longitude
+     * @param {number} lat - Latitude
+     * @returns {Array} Converted coordinates [lng, lat]
+     */
+    function wgs84togcj02(lng, lat) {
+      if (outOfChina(lng, lat)) {
+        return [lng, lat];
+      }
+      let dlat = transformLat(lng - 105.0, lat - 35.0);
+      let dlng = transformLng(lng - 105.0, lat - 35.0);
+      const radLat = lat / 180.0 * Math.PI;
+      let magic = Math.sin(radLat);
+      magic = 1 - ee * magic * magic;
+      const sqrtMagic = Math.sqrt(magic);
+      dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+      dlng = (dlng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+      const mgLat = lat + dlat;
+      const mgLng = lng + dlng;
+      return [mgLng, mgLat];
+    }
+
+    /**
+     * Converts GCJ-02 coordinates to WGS84
+     * Reference: https://github.com/wandergis/coordtransform
+     * @param {number} lng - Longitude
+     * @param {number} lat - Latitude
+     * @returns {Array} Converted coordinates [lng, lat]
+     */
+    function gcj02towgs84(lng, lat) {
+      if (outOfChina(lng, lat)) {
+        return [lng, lat];
+      }
+      let dlat = transformLat(lng - 105.0, lat - 35.0);
+      let dlng = transformLng(lng - 105.0, lat - 35.0);
+      const radLat = lat / 180.0 * Math.PI;
+      let magic = Math.sin(radLat);
+      magic = 1 - ee * magic * magic;
+      const sqrtMagic = Math.sqrt(magic);
+      dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+      dlng = (dlng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+      const mgLat = lat + dlat;
+      const mgLng = lng + dlng;
+      // Reverse the offset to get WGS84 coordinates
+      return [lng * 2 - mgLng, lat * 2 - mgLat];
+    }
+
+    const a = 6378245.0;
+    const ee = 0.00669342162296594323;
+
+    /**
+     * Transforms latitude for coordinate conversion
+     * @param {number} x 
+     * @param {number} y 
+     * @returns {number} Transformed latitude
+     */
+    function transformLat(x, y) {
+      let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+      ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+      ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+      ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+      return ret;
+    }
+
+    /**
+     * Transforms longitude for coordinate conversion
+     * @param {number} x 
+     * @param {number} y 
+     * @returns {number} Transformed longitude
+     */
+    function transformLng(x, y) {
+      let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+      ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+      ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+      ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+      return ret;
+    }
+
+    /**
+     * Checks if the coordinates are outside of China
+     * @param {number} lng - Longitude
+     * @param {number} lat - Latitude
+     * @returns {boolean} True if outside China, else False
+     */
+    function outOfChina(lng, lat) {
+      // China's coordinate range
+      if (lng < 72.004 || lng > 137.8347) {
+        return true;
+      }
+      if (lat < 0.8293 || lat > 55.8271) {
+        return true;
+      }
+      return false;
+    }
+  </script>
+</body>
+</html>
